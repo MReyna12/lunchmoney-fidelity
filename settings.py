@@ -1,0 +1,3 @@
+import os
+
+LUNCHMONEY_API_TOKEN = os.getenv("LUNCHMONEY_API_TOKEN", "")
