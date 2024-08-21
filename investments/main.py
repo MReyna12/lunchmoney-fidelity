@@ -5,24 +5,22 @@ import pandas
 import datetime
 
 # Todo:
-# Figure out how to automate the downloading of the CSV from fidelity and renaming the file to investments.csv and storing in the scripts folder.
-# Figure out where I can use try / except statements
-# Maybe add tests
-# Turn into nightly job
+# Add tests
 # Add README
-# Add setup.cfg
-# Add .gitignore
 
 headers = {"Authorization": f"Bearer {settings.LUNCHMONEY_API_TOKEN}"}
 
 
 def get_fidelity_tag_id(tag_name: str) -> str:
     tags_response = requests.get("https://dev.lunchmoney.app/v1/tags", headers=headers)
+    tags_response.raise_for_status()
     tags_data = tags_response.json()
     fidelity_tag_id = None
     for tag in tags_data:
         if tag["name"] == tag_name:
             fidelity_tag_id = tag["id"]
+    if fidelity_tag_id is None:
+        raise TypeError("The return value for fidelity_tag_id cannot be None")
     return fidelity_tag_id
 
 
@@ -44,8 +42,11 @@ def get_transactions_by_date_and_tag_id(
         "tag_id": tag_id,
     }
     fidelity_transactions_response = requests.get(
-        "https://dev.lunchmoney.app/v1/transactions", headers=headers, params=payload
+        "https://dev.lunchmoney.app/v1/transactions",
+        headers=headers,
+        params=payload,
     )
+    fidelity_transactions_response.raise_for_status()
     fidelity_transactions_data = fidelity_transactions_response.json()
     return fidelity_transactions_data
 
@@ -60,19 +61,27 @@ def update_fidelity_transactions(current_transactions: dict) -> None:
                 & (df["Description"] == transaction["notes"])
             ]
             current_amount = test_something["Current Value"].values[0].replace("$", "-")
-            payload = {
-                "transaction": {"date": current_date, "amount": current_amount}
-            }
+            payload = {"transaction": {"date": current_date, "amount": current_amount}}
             transaction_id = transaction["id"]
-            requests.put(
+            updated_transactions_response = requests.put(
                 "https://dev.lunchmoney.app/v1/transactions/{}".format(transaction_id),
                 headers=headers,
                 json=payload,
             )
+            updated_transactions_response.raise_for_status()
+
+
+def get_fidelity_asset_id() -> None:
+    asset_response = requests.get(
+        "https://dev.lunchmoney.app/v1/assets", headers=headers
+    )
+    asset_response.raise_for_status()
+    asset_data = asset_response.json()
+    asset_id = asset_data["assets"][0]["id"]
+    return asset_id
 
 
 def update_investment_balance(updated_transactions: dict) -> None:
-    # Potentially refactor this new_balance logic.
     new_balance = 0
     for transaction in updated_transactions["transactions"]:
         transaction_amount = transaction["amount"].replace("-", "")
@@ -81,17 +90,14 @@ def update_investment_balance(updated_transactions: dict) -> None:
     new_balance = str(new_balance)
 
     if new_balance != "0":
-        asset_response = requests.get(
-            "https://dev.lunchmoney.app/v1/assets", headers=headers
-        )
-        asset_data = asset_response.json()
-        asset_id = asset_data["assets"][0]["id"]
-        payload = {"assets": {"balance": new_balance}}
-        requests.put(
+        payload = {"balance": new_balance}
+        asset_id = get_fidelity_asset_id()
+        updated_asset_response = requests.put(
             "https://dev.lunchmoney.app/v1/assets/{}".format(asset_id),
             headers=headers,
             json=payload,
         )
+        updated_asset_response.raise_for_status()
 
 
 def main():
@@ -115,15 +121,22 @@ def main():
     start_date = args.start_date
     end_date = args.end_date
 
-    tag_id = get_fidelity_tag_id(tag_name)
-    current_transactions = get_transactions_by_date_and_tag_id(
-        start_date, end_date, tag_id
-    )
-    update_fidelity_transactions(current_transactions)
-    updated_transactions = get_transactions_by_date_and_tag_id(
-        start_date, end_date, tag_id
-    )
-    update_investment_balance(updated_transactions)
+    try:
+        tag_id = get_fidelity_tag_id(tag_name)
+        current_transactions = get_transactions_by_date_and_tag_id(
+            start_date, end_date, tag_id
+        )
+        update_fidelity_transactions(current_transactions)
+        updated_transactions = get_transactions_by_date_and_tag_id(
+            start_date, end_date, tag_id
+        )
+        update_investment_balance(updated_transactions)
+    except requests.exceptions.HTTPError as httperr:
+        raise httperr
+    except requests.exceptions.ConnectionError as connerr:
+        raise connerr
+    except requests.exceptions.RequestException as err:
+        raise err
 
 
 if __name__ == "__main__":
