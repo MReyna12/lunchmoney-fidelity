@@ -4,15 +4,12 @@ import argparse
 import pandas
 import datetime
 
-# Todo:
-# Add tests
-# Add README
 
-headers = {"Authorization": f"Bearer {settings.LUNCHMONEY_API_TOKEN}"}
+HEADER = {"Authorization": f"Bearer {settings.LUNCHMONEY_API_TOKEN}"}
 
 
 def get_fidelity_tag_id(tag_name: str) -> str:
-    tags_response = requests.get("https://dev.lunchmoney.app/v1/tags", headers=headers)
+    tags_response = requests.get("https://dev.lunchmoney.app/v1/tags", headers=HEADER)
     tags_response.raise_for_status()
     tags_data = tags_response.json()
     fidelity_tag_id = None
@@ -43,7 +40,7 @@ def get_transactions_by_date_and_tag_id(
     }
     fidelity_transactions_response = requests.get(
         "https://dev.lunchmoney.app/v1/transactions",
-        headers=headers,
+        headers=HEADER,
         params=payload,
     )
     fidelity_transactions_response.raise_for_status()
@@ -51,29 +48,29 @@ def get_transactions_by_date_and_tag_id(
     return fidelity_transactions_data
 
 
-def update_fidelity_transactions(current_transactions: dict) -> None:
-    df = pandas.read_csv("investments.csv")
+def update_fidelity_transactions(current_transactions: dict, csv_path: str) -> None:
+    df = pandas.read_csv(csv_path)
     current_date = datetime.date.today().strftime("%Y-%m-%d")
     for transaction in current_transactions["transactions"]:
         if transaction["payee"] and transaction["notes"] in df.values:
-            test_something = df.loc[
+            investment_account = df.loc[
                 (df["Account Name"] == transaction["payee"])
                 & (df["Description"] == transaction["notes"])
             ]
-            current_amount = test_something["Current Value"].values[0].replace("$", "-")
+            current_amount = investment_account["Current Value"].values[0].replace("$", "-")
             payload = {"transaction": {"date": current_date, "amount": current_amount}}
             transaction_id = transaction["id"]
             updated_transactions_response = requests.put(
                 "https://dev.lunchmoney.app/v1/transactions/{}".format(transaction_id),
-                headers=headers,
+                headers=HEADER,
                 json=payload,
             )
             updated_transactions_response.raise_for_status()
 
 
-def get_fidelity_asset_id() -> None:
+def get_fidelity_asset_id() -> int:
     asset_response = requests.get(
-        "https://dev.lunchmoney.app/v1/assets", headers=headers
+        "https://dev.lunchmoney.app/v1/assets", headers=HEADER
     )
     asset_response.raise_for_status()
     asset_data = asset_response.json()
@@ -94,7 +91,7 @@ def update_investment_balance(updated_transactions: dict) -> None:
         asset_id = get_fidelity_asset_id()
         updated_asset_response = requests.put(
             "https://dev.lunchmoney.app/v1/assets/{}".format(asset_id),
-            headers=headers,
+            headers=HEADER,
             json=payload,
         )
         updated_asset_response.raise_for_status()
@@ -115,18 +112,24 @@ def main():
         type=validate_date_format,
         help="Denotes the end of the time period you'd like to get transactions for. Format: YYYY-MM-DD. Cannot be the same date as start_date",
     )
+    parser.add_argument(
+        "path",
+        type=str,
+        help="Path to CSV file containing various investment accounts and their balances",
+    )
 
     args = parser.parse_args()
     tag_name = args.tag_name
     start_date = args.start_date
     end_date = args.end_date
+    csv = args.path
 
     try:
         tag_id = get_fidelity_tag_id(tag_name)
         current_transactions = get_transactions_by_date_and_tag_id(
             start_date, end_date, tag_id
         )
-        update_fidelity_transactions(current_transactions)
+        update_fidelity_transactions(current_transactions, csv_path=csv)
         updated_transactions = get_transactions_by_date_and_tag_id(
             start_date, end_date, tag_id
         )
